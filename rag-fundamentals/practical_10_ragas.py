@@ -1,15 +1,23 @@
 # practical_10_ragas.py
 
+__import__('pysqlite3')
+import sys
+sys.modules['sqlite3'] = sys.modules.pop('pysqlite3')
+
 from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import Chroma
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
 from ragas import evaluate, EvaluationDataset
 from ragas.metrics import faithfulness, answer_relevancy, context_precision
+from ragas.llms import llm_factory
+from ragas.embeddings import OpenAIEmbeddings as RagasOpenAIEmbeddings
+from openai import OpenAI
 from dotenv import load_dotenv
+
 load_dotenv()
 
-# ── Step 1: Build the same RAG pipeline from practical 6 ──
+# ── Step 1: RAG pipeline ──
 text = """
 Artificial intelligence is transforming how we build software.
 Machine learning models can now understand text, images, and audio.
@@ -52,7 +60,7 @@ Question: {question}
 )
 chain = prompt | llm
 
-# ── Step 2: Define test questions with expected answers ──
+# ── Step 2: Test cases ──
 test_cases = [
     {
         "question": "What is RAG?",
@@ -68,7 +76,7 @@ test_cases = [
     },
 ]
 
-# ── Step 3: Run RAG pipeline and collect results ──
+# ── Step 3: Run pipeline and collect results ──
 samples = []
 
 for tc in test_cases:
@@ -77,21 +85,31 @@ for tc in test_cases:
     answer = chain.invoke({"context": context, "question": tc["question"]})
 
     samples.append({
-        "user_input":          tc["question"],
-        "retrieved_contexts":  [doc.page_content for doc in docs],
-        "response":            answer.content,
-        "reference":           tc["reference"]
+        "user_input":         tc["question"],
+        "retrieved_contexts": [doc.page_content for doc in docs],
+        "response":           answer.content,
+        "reference":          tc["reference"]
     })
     print(f"Q: {tc['question']}")
     print(f"A: {answer.content}\n")
 
 # ── Step 4: Evaluate with RAGAS ──
 print("Running RAGAS evaluation...")
+
+openai_client = OpenAI()
+ragas_llm = llm_factory("gpt-3.5-turbo", client=openai_client)
+ragas_embeddings = RagasOpenAIEmbeddings(
+    model="text-embedding-3-small",
+    client=openai_client
+)
+
 dataset = EvaluationDataset.from_list(samples)
 
 results = evaluate(
     dataset=dataset,
-    metrics=[faithfulness, answer_relevancy, context_precision]
+    metrics=[faithfulness, answer_relevancy, context_precision],
+    llm=ragas_llm,
+    embeddings=ragas_embeddings
 )
 
 print("\nRAGAS Scores:")
